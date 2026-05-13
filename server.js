@@ -1,10 +1,10 @@
 // ============================================================
 // VirtualMall 后端服务器
-// Node.js v24 + Express + sqlite3 + multer
+// Node.js v18+ + Express + better-sqlite3 + multer
 // ============================================================
 
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -65,18 +65,19 @@ app.use((req, res, next) => {
 });
 
 // ---------- 数据库初始化 ----------
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) {
-    console.error('❌ 数据库连接失败：', err.message);
-    process.exit(1);
-  }
-});
-console.log('✅ 数据库连接成功：', DB_PATH);
+let db;
+try {
+  db = new Database(DB_PATH);
+  console.log('✅ 数据库连接成功：', DB_PATH);
+} catch (err) {
+  console.error('❌ 数据库连接失败：', err.message);
+  process.exit(1);
+}
 
 // ---------- 创建/迁移表 ----------
-db.serialize(() => {
+try {
   // 商品表
-  db.run(`CREATE TABLE IF NOT EXISTS products (
+  db.exec(`CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     emoji TEXT DEFAULT '📦',
     name TEXT NOT NULL,
@@ -93,21 +94,15 @@ db.serialize(() => {
     images TEXT DEFAULT '[]',
     video_url TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`, (err) => {
-    if (err) console.error('创建 products 表失败：', err.message);
-  });
+  )`);
 
-  // 迁移：添加 images 列
-  db.run(`ALTER TABLE products ADD COLUMN images TEXT DEFAULT '[]'`, (err) => {
-    if (err && !err.message.includes('duplicate column')) console.error('添加 images 列失败：', err.message);
-  });
+  // 迁移：添加 images 列（忽略已存在错误）
+  try { db.exec(`ALTER TABLE products ADD COLUMN images TEXT DEFAULT '[]'`); } catch(e) {}
   // 迁移：添加 video_url 列
-  db.run(`ALTER TABLE products ADD COLUMN video_url TEXT DEFAULT ''`, (err) => {
-    if (err && !err.message.includes('duplicate column')) console.error('添加 video_url 列失败：', err.message);
-  });
+  try { db.exec(`ALTER TABLE products ADD COLUMN video_url TEXT DEFAULT ''`); } catch(e) {}
 
   // 库存表
-  db.run(`CREATE TABLE IF NOT EXISTS inventory (
+  db.exec(`CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL,
     link TEXT NOT NULL,
@@ -117,12 +112,10 @@ db.serialize(() => {
     order_id TEXT DEFAULT '',
     used_at TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`, (err) => {
-    if (err) console.error('创建 inventory 表失败：', err.message);
-  });
+  )`);
 
   // 订单表
-  db.run(`CREATE TABLE IF NOT EXISTS orders (
+  db.exec(`CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     items TEXT NOT NULL,
     total REAL NOT NULL,
@@ -132,58 +125,50 @@ db.serialize(() => {
     status TEXT DEFAULT 'pending',
     links TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`, (err) => {
-    if (err) console.error('创建 orders 表失败：', err.message);
-  });
+  )`);
 
   // 设置表
-  db.run(`CREATE TABLE IF NOT EXISTS settings (
+  db.exec(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT DEFAULT ''
-  )`, (err) => {
-    if (err) console.error('创建 settings 表失败：', err.message);
-  });
-});
+  )`);
+} catch (err) {
+  console.error('❌ 创建表失败：', err.message);
+}
 
 // ---------- 插入默认商品（仅当表为空时）----------
-db.get('SELECT COUNT(*) as cnt FROM products', (err, row) => {
-  if (err) { console.error('查询商品失败：', err.message); return; }
-  if (row.cnt === 0) {
-    const defaults = [
-      ['🎁','Apple 礼品卡 $100','礼品卡','hot','美国区App Store & iTunes 充值卡，即时发货',685,720,12580,5,2341],
-      ['🎮','Steam 钱包充值 $50','游戏充值','none','全球版，支持所有区域，秒到账',345,365,8942,5,5672],
-      ['🤖','ChatGPT Plus 一个月','AI服务','sale','官方正版，支持GPT-4o，即开即用',128,168,15234,4,3891],
-      ['🎬','Netflix 高级会员 1个月','流媒体会员','hot','4K画质，4台设备同时在线',45,65,22105,5,4521],
-      ['🎵','Spotify Premium 3个月','音乐会员','none','全球版，无广告，离线下载',89,120,6732,5,1876],
-      ['☁️','iCloud 200GB 一年','云存储','new','苹果官方，自动续费，安全可靠',198,240,3421,5,956],
-    ];
-    const stmt = db.prepare(
-      `INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews) VALUES (?,?,?,?,?,?,?,?,?,?)`
-    );
-    db.serialize(() => {
-      defaults.forEach(d => stmt.run(...d, (err) => { if (err) console.error('插入商品失败：', err.message); }));
-      stmt.finalize();
-    });
-    console.log('✅ 默认商品数据已初始化');
-  }
-});
+const countRow = db.prepare('SELECT COUNT(*) as cnt FROM products').get();
+if (countRow.cnt === 0) {
+  const defaults = [
+    ['🎁','Apple 礼品卡 $100','礼品卡','hot','美国区App Store & iTunes 充值卡，即时发货',685,720,12580,5,2341],
+    ['🎮','Steam 钱包充值 $50','游戏充值','none','全球版，支持所有区域，秒到账',345,365,8942,5,5672],
+    ['🤖','ChatGPT Plus 一个月','AI服务','sale','官方正版，支持GPT-4o，即开即用',128,168,15234,4,3891],
+    ['🎬','Netflix 高级会员 1个月','流媒体会员','hot','4K画质，4台设备同时在线',45,65,22105,5,4521],
+    ['🎵','Spotify Premium 3个月','音乐会员','none','全球版，无广告，离线下载',89,120,6732,5,1876],
+    ['☁️','iCloud 200GB 一年','云存储','new','苹果官方，自动续费，安全可靠',198,240,3421,5,956],
+  ];
+  const insertStmt = db.prepare(
+    `INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews) VALUES (?,?,?,?,?,?,?,?,?,?)`
+  );
+  defaults.forEach(d => insertStmt.run(...d));
+  console.log('✅ 默认商品数据已初始化');
+}
 
-// ---------- Promise 化 db 操作 ----------
+// ---------- Promise 化 db 操作（兼容原有异步代码）----------
 function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows); });
+  return new Promise((resolve) => {
+    resolve(db.prepare(sql).all(...params));
   });
 }
 function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => { if (err) reject(err); else resolve(row); });
+  return new Promise((resolve) => {
+    resolve(db.prepare(sql).get(...params));
   });
 }
 function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) {
-      if (err) reject(err); else resolve({ lastID: this.lastID, changes: this.changes });
-    });
+  return new Promise((resolve) => {
+    const result = db.prepare(sql).run(...params);
+    resolve({ lastID: result.lastInsertRowid, changes: result.changes });
   });
 }
 
@@ -194,7 +179,7 @@ function dbRun(sql, params = []) {
 // ----- 商品接口 -----
 app.get('/api/products', async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT p.*, 
+    const rows = await dbAll(`SELECT p.*,
       (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
       FROM products p ORDER BY p.id ASC`);
     rows.forEach(r => { try { r.images = JSON.parse(r.images || '[]'); } catch(e) { r.images = []; } });
@@ -204,7 +189,7 @@ app.get('/api/products', async (req, res) => {
 
 app.get('/api/products/active', async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT p.*, 
+    const rows = await dbAll(`SELECT p.*,
       (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
       FROM products p WHERE p.status = 'active' ORDER BY p.id ASC`);
     rows.forEach(r => { try { r.images = JSON.parse(r.images || '[]'); } catch(e) { r.images = []; } });
@@ -214,7 +199,7 @@ app.get('/api/products/active', async (req, res) => {
 
 app.get('/api/products/:id', async (req, res) => {
   try {
-    const row = await dbGet(`SELECT p.*, 
+    const row = await dbGet(`SELECT p.*,
       (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
       FROM products p WHERE p.id = ?`, [req.params.id]);
     if (!row) return res.json({ success: false, message: '商品不存在' });
@@ -333,20 +318,17 @@ app.post('/api/inventory/batch', async (req, res) => {
   const { product_id, lines } = req.body;
   if (!product_id || !lines || !lines.length) return res.json({ success: false, message: '参数不完整' });
   try {
-    db.serialize(() => {
-      db.run('BEGIN TRANSACTION');
-      const stmt = db.prepare(`INSERT INTO inventory (product_id,link,pwd,remark) VALUES (?,?,?,?)`);
-      let count = 0;
-      lines.forEach(l => {
-        stmt.run(product_id, l.link||'', l.pwd||'', l.remark||'');
-        count++;
-      });
-      stmt.finalize();
-      db.run('COMMIT');
+    db.prepare('BEGIN TRANSACTION').run();
+    const stmt = db.prepare(`INSERT INTO inventory (product_id,link,pwd,remark) VALUES (?,?,?,?)`);
+    let count = 0;
+    lines.forEach(l => {
+      stmt.run(product_id, l.link||'', l.pwd||'', l.remark||'');
+      count++;
     });
+    db.prepare('COMMIT').run();
     res.json({ success: true, message: `成功导入 ${count} 条记录` });
   } catch(e) {
-    db.run('ROLLBACK');
+    db.prepare('ROLLBACK').run();
     res.json({ success: false, message: e.message });
   }
 });
@@ -449,10 +431,10 @@ app.post('/api/orders/:id/ship', async (req, res) => {
   try {
     const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
     if (!order) return res.json({ success: false, message: '订单不存在' });
-    
+
     let links = order.links ? JSON.parse(order.links) : [];
     const items = JSON.parse(order.items);
-    
+
     for (const item of items) {
       const alreadyHas = links.filter(l => l.productName === item.name).length;
       for (let n = alreadyHas; n < item.qty; n++) {
@@ -539,7 +521,6 @@ app.post('/api/reset', async (req, res) => {
     ];
     const stmt = db.prepare(`INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews) VALUES (?,?,?,?,?,?,?,?,?,?)`);
     defaults.forEach(d => stmt.run(...d));
-    stmt.finalize();
     res.json({ success: true, message: '数据已重置，默认商品已恢复' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
