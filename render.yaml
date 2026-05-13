@@ -1,11 +1,13 @@
 services:
   - type: web
     name: virtualmall
-    env: node
+    runtime: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:
+      - key: NODE_VERSION
+        value: 18.20.0
       - key: NODE_ENV
         value: production
       - key: SUPABASE_URL
