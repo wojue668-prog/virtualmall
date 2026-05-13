@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VirtualMall - 虚拟商品商城</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- ========== 顶部导航 ========== -->
+    <header class="header" id="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo" onclick="goHome()">
+                    <span class="logo-icon">⚡</span>
+                    <span class="logo-text">VirtualMall</span>
+                </div>
+                <nav class="nav" id="mainNav">
+                    <a href="#" class="nav-link active" onclick="goHome()">首页</a>
+                    <a href="#" class="nav-link" onclick="goProducts()">全部商品</a>
+                    <a href="#" class="nav-link" onclick="goOrders()">我的订单</a>
+                    <a href="#" class="nav-link">帮助中心</a>
+                </nav>
+                <div class="header-actions">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="搜索虚拟商品..." onkeypress="if(event.key==='Enter')searchProducts()">
+                        <button class="search-btn" onclick="searchProducts()">🔍</button>
+                    </div>
+                    <a href="#" class="cart-btn" onclick="goCart(event)">🛒 购物车<span class="cart-count" id="cartCount">0</span></a>
+                    <a href="admin-login.html" class="login-btn">管理后台</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ========== 首页内容 ========== -->
+    <div id="page-home">
+        <!-- 轮播图 -->
+        <section class="carousel-section">
+            <div class="carousel">
+                <div class="carousel-slides">
+                    <div class="carousel-slide active" data-bg="#667eea">
+                        <div class="slide-content">
+                            <div class="slide-tag">限时特惠</div>
+                            <h2>Apple 礼品卡</h2>
+                            <p>全场9折，即时发货，支持所有苹果设备</p>
+                            <a href="#" class="slide-btn" onclick="goProducts()">立即抢购 →</a>
+                        </div>
+                        <div class="slide-image">🎁</div>
+                    </div>
+                    <div class="carousel-slide" data-bg="#764ba2">
+                        <div class="slide-content">
+                            <div class="slide-tag">新品首发</div>
+                            <h2>Steam 钱包充值</h2>
+                            <p>全球版，即时到账，支持大额充值优惠</p>
+                            <a href="#" class="slide-btn" onclick="goProducts()">了解更多 →</a>
+                        </div>
+                        <div class="slide-image">🎮</div>
+                    </div>
+                    <div class="carousel-slide" data-bg="#f093fb">
+                        <div class="slide-content">
+                            <div class="slide-tag">会员专享</div>
+                            <h2>Netflix 会员账号</h2>
+                            <p>4K超清，多设备同时在线，稳定可靠</p>
+                            <a href="#" class="slide-btn" onclick="goProducts()">查看详情 →</a>
+                        </div>
+                        <div class="slide-image">🎬</div>
+                    </div>
+                    <div class="carousel-slide" data-bg="#4facfe">
+                        <div class="slide-content">
+                            <div class="slide-tag">热销爆款</div>
+                            <h2>ChatGPT Plus 代充</h2>
+                            <p>官方渠道，快速激活，售后保障</p>
+                            <a href="#" class="slide-btn" onclick="goProducts()">马上购买 →</a>
+                        </div>
+                        <div class="slide-image">🤖</div>
+                    </div>
+                </div>
+                <button class="carousel-btn prev" onclick="changeSlide(-1)">‹</button>
+                <button class="carousel-btn next" onclick="changeSlide(1)">›</button>
+                <div class="carousel-dots">
+                    <span class="dot active" onclick="goToSlide(0)"></span>
+                    <span class="dot" onclick="goToSlide(1)"></span>
+                    <span class="dot" onclick="goToSlide(2)"></span>
+                    <span class="dot" onclick="goToSlide(3)"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 公告栏 -->
+        <section class="notice-bar">
+            <div class="container">
+                <div class="notice-content">
+                    <span class="notice-icon">📢</span>
+                    <div class="notice-text">
+                        <span class="notice-item">🎉 新用户注册即送20元优惠券，全场通用！</span>
+                        <span class="notice-item">⚡ 所有商品自动发货，平均到货时间 < 2分钟</span>
+                        <span class="notice-item">🔒 100%正品保障，支持验货后确认收货</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 商品分类 -->
+        <section class="categories-section">
+            <div class="container">
+                <h2 class="section-title"><span class="title-icon">📦</span>商品分类</h2>
+                <div class="categories-grid" id="homeCategories"></div>
+            </div>
+        </section>
+
+        <!-- 热门商品 -->
+        <section class="hot-products-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title"><span class="title-icon">🔥</span>热门商品</h2>
+                    <a href="#" class="view-all" onclick="goProducts();return false;">查看全部 →</a>
+                </div>
+                <div class="products-grid" id="homeProducts"></div>
+            </div>
+        </section>
+
+        <!-- 促销活动 -->
+        <section class="promotions-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title"><span class="title-icon">🎉</span>促销活动</h2>
+                </div>
+                <div class="promotions-grid">
+                    <div class="promo-card promo-large">
+                        <div class="promo-content">
+                            <div class="promo-tag">限时秒杀</div>
+                            <h3>每月15号 会员日</h3>
+                            <p>全场虚拟商品限时8折，新用户额外减10元</p>
+                            <div class="promo-countdown">
+                                <span>距活动结束:</span>
+                                <div class="countdown" id="countdown">正在计算...</div>
+                            </div>
+                            <a href="#" class="promo-btn">立即参与</a>
+                        </div>
+                    </div>
+                    <div class="promo-card promo-medium">
+                        <div class="promo-content">
+                            <div class="promo-tag">满减优惠</div>
+                            <h3>满200减30</h3>
+                            <p>单笔订单满200元立减30元，可叠加优惠券使用</p>
+                            <a href="#" class="promo-btn">去凑单 →</a>
+                        </div>
+                    </div>
+                    <div class="promo-card promo-medium">
+                        <div class="promo-content">
+                            <div class="promo-tag">新人专享</div>
+                            <h3>新用户大礼包</h3>
+                            <p>注册即送50元优惠券包，首单立减</p>
+                            <a href="#" class="promo-btn">领取优惠 →</a>
+                        </div>
+                    </div>
+                    <div class="promo-card promo-small">
+                        <div class="promo-content">
+                            <div class="promo-icon">🎁</div>
+                            <h3>邀请有礼</h3>
+                            <p>每邀请1位好友下单，双方各得15元</p>
+                        </div>
+                    </div>
+                    <div class="promo-card promo-small">
+                        <div class="promo-content">
+                            <div class="promo-icon">💎</div>
+                            <h3>会员特权</h3>
+                            <p>开通会员享95折+专属客服+优先发货</p>
+                        </div>
+                    </div>
+                    <div class="promo-card promo-small">
+                        <div class="promo-content">
+                            <div class="promo-icon">🔄</div>
+                            <h3>积分商城</h3>
+                            <p>购物攒积分，免费兑换热门商品</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 特色服务 -->
+        <section class="features-section">
+            <div class="container">
+                <div class="features-grid">
+                    <div class="feature-item"><div class="feature-icon">⚡</div><h4>极速发货</h4><p>自动发货，平均2分钟到账</p></div>
+                    <div class="feature-item"><div class="feature-icon">🔒</div><h4>正品保障</h4><p>100%官方正版，假一赔十</p></div>
+                    <div class="feature-item"><div class="feature-icon">💬</div><h4>24h客服</h4><p>全天候在线，随时解决问题</p></div>
+                    <div class="feature-item"><div class="feature-icon">🔄</div><h4>售后无忧</h4><p>7天无理由退款保障</p></div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- ========== 商品列表页 ========== -->
+    <div id="page-products" style="display:none;">
+        <div class="container" style="padding:24px 20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+                <h2 class="section-title" style="margin:0;"><span class="title-icon">📦</span>全部商品</h2>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="productSearchInput" placeholder="搜索商品..." style="padding:8px 14px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; width:180px;">
+                    <select id="productCategoryFilter" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; outline:none;">
+                        <option value="">全部分类</option>
+                        <option value="游戏充值">游戏充值</option>
+                        <option value="流媒体会员">流媒体会员</option>
+                        <option value="应用商店卡">应用商店卡</option>
+                        <option value="AI服务">AI服务</option>
+                        <option value="云存储">云存储</option>
+                        <option value="音乐会员">音乐会员</option>
+                        <option value="学习会员">学习会员</option>
+                        <option value="礼品卡">礼品卡</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="renderProductList()" style="padding:8px 16px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; border:none; border-radius:8px; cursor:pointer; font-size:13px;">搜索</button>
+                </div>
+            </div>
+            <div class="products-grid" id="allProductsGrid"></div>
+            <div id="productsEmpty" style="text-align:center; padding:60px 20px; color:#718096; display:none;">
+                <div style="font-size:48px; margin-bottom:12px;">📦</div>
+                <div>暂无商品</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 商品详情页 ========== -->
+    <div id="page-detail" style="display:none;">
+        <div class="container" style="padding:24px 20px;">
+            <div style="margin-bottom:16px;">
+                <a href="#" onclick="goHome();return false;" style="font-size:14px; color:#667eea; text-decoration:none;">← 返回首页</a>
+            </div>
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 购物车页 ========== -->
+    <div id="page-cart" style="display:none;">
+        <div class="container" style="padding:24px 20px;">
+            <h2 class="section-title" style="margin-bottom:20px;"><span class="title-icon">🛒</span>购物车</h2>
+            <div id="cartContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 结算支付页 ========== -->
+    <div id="page-checkout" style="display:none;">
+        <div class="container" style="padding:24px 20px;">
+            <h2 class="section-title" style="margin-bottom:20px;"><span class="title-icon">💰</span>确认订单</h2>
+            <div id="checkoutContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 支付页（展示收款码） ========== -->
+    <div id="page-pay" style="display:none;">
+        <div class="container" style="padding:24px 20px; max-width:500px; margin:0 auto;">
+            <h2 class="section-title" style="margin-bottom:20px; justify-content:center;"><span class="title-icon">💳</span>订单支付</h2>
+            <div id="payContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 支付成功页 ========== -->
+    <div id="page-success" style="display:none;">
+        <div class="container" style="padding:40px 20px; max-width:600px; margin:0 auto;">
+            <div id="successContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 我的订单页 ========== -->
+    <div id="page-orders" style="display:none;">
+        <div class="container" style="padding:24px 20px;">
+            <h2 class="section-title" style="margin-bottom:20px;"><span class="title-icon">📋</span>我的订单</h2>
+            <div id="ordersContent"></div>
+        </div>
+    </div>
+
+    <!-- ========== 页脚 ========== -->
+    <footer class="footer" id="mainFooter">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <h4>关于我们</h4>
+                    <ul><li><a href="#">公司介绍</a></li><li><a href="#">联系方式</a></li><li><a href="#">招贤纳士</a></li><li><a href="#">服务条款</a></li></ul>
+                </div>
+                <div class="footer-col">
+                    <h4>帮助中心</h4>
+                    <ul><li><a href="#">如何购买</a></li><li><a href="#">发货说明</a></li><li><a href="#">退款政策</a></li><li><a href="#">常见问题</a></li></ul>
+                </div>
+                <div class="footer-col">
+                    <h4>支付方式</h4>
+                    <ul><li><a href="#">支付宝</a></li><li><a href="#">微信支付</a></li><li><a href="#">银行卡</a></li><li><a href="#">PayPal</a></li></ul>
+                </div>
+                <div class="footer-col">
+                    <h4>关注我们</h4>
+                    <ul><li><a href="#">微信公众号</a></li><li><a href="#">QQ群</a></li><li><a href="#">Telegram</a></li><li><a href="#">Discord</a></li></ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 VirtualMall. All rights reserved. | 虚拟商品交易平台</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
