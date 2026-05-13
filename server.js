@@ -1,18 +1,31 @@
 // ============================================================
-// VirtualMall 后端服务器
-// Node.js v18+ + Express + better-sqlite3 + multer
+// VirtualMall 后端服务器 (Supabase 版)
+// Node.js v18+ + Express + @supabase/supabase-js + multer
 // ============================================================
 
 const express = require('express');
-const Database = require('better-sqlite3');
+const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
 const fs = require('fs');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DATABASE_URL || path.join(__dirname, 'virtualmall.db');
+
+// ========== Supabase 初始化 ==========
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error('❌ 缺少 Supabase 环境变量！');
+  console.error('   请设置 SUPABASE_URL 和 SUPABASE_SERVICE_KEY');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+console.log('✅ Supabase 连接成功：', SUPABASE_URL);
 
 // ========== 确保 uploads 目录存在 ==========
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
@@ -64,114 +77,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- 数据库初始化 ----------
-let db;
-try {
-  db = new Database(DB_PATH);
-  console.log('✅ 数据库连接成功：', DB_PATH);
-} catch (err) {
-  console.error('❌ 数据库连接失败：', err.message);
-  process.exit(1);
-}
-
-// ---------- 创建/迁移表 ----------
-try {
-  // 商品表
-  db.exec(`CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    emoji TEXT DEFAULT '📦',
-    name TEXT NOT NULL,
-    category TEXT DEFAULT '',
-    badge TEXT DEFAULT 'none',
-    description TEXT DEFAULT '',
-    price REAL NOT NULL,
-    original_price REAL DEFAULT 0,
-    sales INTEGER DEFAULT 0,
-    rating REAL DEFAULT 5,
-    reviews INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'active',
-    shipping_method TEXT DEFAULT 'auto',
-    images TEXT DEFAULT '[]',
-    video_url TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`);
-
-  // 迁移：添加 images 列（忽略已存在错误）
-  try { db.exec(`ALTER TABLE products ADD COLUMN images TEXT DEFAULT '[]'`); } catch(e) {}
-  // 迁移：添加 video_url 列
-  try { db.exec(`ALTER TABLE products ADD COLUMN video_url TEXT DEFAULT ''`); } catch(e) {}
-
-  // 库存表
-  db.exec(`CREATE TABLE IF NOT EXISTS inventory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL,
-    link TEXT NOT NULL,
-    pwd TEXT DEFAULT '',
-    remark TEXT DEFAULT '',
-    status TEXT DEFAULT 'unused',
-    order_id TEXT DEFAULT '',
-    used_at TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`);
-
-  // 订单表
-  db.exec(`CREATE TABLE IF NOT EXISTS orders (
-    id TEXT PRIMARY KEY,
-    items TEXT NOT NULL,
-    total REAL NOT NULL,
-    email TEXT NOT NULL,
-    phone TEXT DEFAULT '',
-    note TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending',
-    links TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`);
-
-  // 设置表
-  db.exec(`CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT DEFAULT ''
-  )`);
-} catch (err) {
-  console.error('❌ 创建表失败：', err.message);
-}
-
-// ---------- 插入默认商品（仅当表为空时）----------
-const countRow = db.prepare('SELECT COUNT(*) as cnt FROM products').get();
-if (countRow.cnt === 0) {
-  const defaults = [
-    ['🎁','Apple 礼品卡 $100','礼品卡','hot','美国区App Store & iTunes 充值卡，即时发货',685,720,12580,5,2341],
-    ['🎮','Steam 钱包充值 $50','游戏充值','none','全球版，支持所有区域，秒到账',345,365,8942,5,5672],
-    ['🤖','ChatGPT Plus 一个月','AI服务','sale','官方正版，支持GPT-4o，即开即用',128,168,15234,4,3891],
-    ['🎬','Netflix 高级会员 1个月','流媒体会员','hot','4K画质，4台设备同时在线',45,65,22105,5,4521],
-    ['🎵','Spotify Premium 3个月','音乐会员','none','全球版，无广告，离线下载',89,120,6732,5,1876],
-    ['☁️','iCloud 200GB 一年','云存储','new','苹果官方，自动续费，安全可靠',198,240,3421,5,956],
-  ];
-  const insertStmt = db.prepare(
-    `INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews) VALUES (?,?,?,?,?,?,?,?,?,?)`
-  );
-  defaults.forEach(d => insertStmt.run(...d));
-  console.log('✅ 默认商品数据已初始化');
-}
-
-// ---------- Promise 化 db 操作（兼容原有异步代码）----------
-function dbAll(sql, params = []) {
-  return new Promise((resolve) => {
-    resolve(db.prepare(sql).all(...params));
-  });
-}
-function dbGet(sql, params = []) {
-  return new Promise((resolve) => {
-    resolve(db.prepare(sql).get(...params));
-  });
-}
-function dbRun(sql, params = []) {
-  return new Promise((resolve) => {
-    const result = db.prepare(sql).run(...params);
-    resolve({ lastID: result.lastInsertRowid, changes: result.changes });
-  });
-}
-
 // ============================================================
 // API 接口
 // ============================================================
@@ -179,32 +84,63 @@ function dbRun(sql, params = []) {
 // ----- 商品接口 -----
 app.get('/api/products', async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT p.*,
-      (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
-      FROM products p ORDER BY p.id ASC`);
-    rows.forEach(r => { try { r.images = JSON.parse(r.images || '[]'); } catch(e) { r.images = []; } });
-    res.json({ success: true, data: rows });
+    const { data: rows, error } = await supabase
+      .from('products')
+      .select(`*, inventory!product_id(status)`)
+      .order('id', { ascending: true });
+
+    if (error) return res.json({ success: false, message: error.message });
+
+    const result = rows.map(r => {
+      // 计算每个商品的可用库存数量
+      const stockCount = (r.inventory || []).filter(inv => inv.status === 'unused').length;
+      const { inventory, ...rest } = r;
+      try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+      return { ...rest, stock_count: stockCount };
+    });
+
+    res.json({ success: true, data: result });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.get('/api/products/active', async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT p.*,
-      (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
-      FROM products p WHERE p.status = 'active' ORDER BY p.id ASC`);
-    rows.forEach(r => { try { r.images = JSON.parse(r.images || '[]'); } catch(e) { r.images = []; } });
-    res.json({ success: true, data: rows });
+    const { data: rows, error } = await supabase
+      .from('products')
+      .select(`*, inventory!product_id(status)`)
+      .eq('status', 'active')
+      .order('id', { ascending: true });
+
+    if (error) return res.json({ success: false, message: error.message });
+
+    const result = rows.map(r => {
+      const stockCount = (r.inventory || []).filter(inv => inv.status === 'unused').length;
+      const { inventory, ...rest } = r;
+      try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+      return { ...rest, stock_count: stockCount };
+    });
+
+    res.json({ success: true, data: result });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.get('/api/products/:id', async (req, res) => {
   try {
-    const row = await dbGet(`SELECT p.*,
-      (SELECT COUNT(*) FROM inventory WHERE product_id = p.id AND status = 'unused') as stock_count
-      FROM products p WHERE p.id = ?`, [req.params.id]);
+    const { data: row, error } = await supabase
+      .from('products')
+      .select(`*, inventory!product_id(status)`)
+      .eq('id', req.params.id)
+      .single();
+
+    if (error) return res.json({ success: false, message: '商品不存在' });
     if (!row) return res.json({ success: false, message: '商品不存在' });
-    try { row.images = JSON.parse(row.images || '[]'); } catch(e) { row.images = []; }
-    res.json({ success: true, data: row });
+
+    const stockCount = (row.inventory || []).filter(inv => inv.status === 'unused').length;
+    const { inventory, ...rest } = row;
+    try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+    rest.stock_count = stockCount;
+
+    res.json({ success: true, data: rest });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
@@ -214,21 +150,32 @@ app.post('/api/products', upload, async (req, res) => {
     const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method } = req.body;
     if (!name || !price) return res.json({ success: false, message: '名称和售价为必填项' });
 
-    // 处理上传的图片
     const imagePaths = (req.files && req.files['images'] || []).map(f => '/uploads/' + f.filename);
-    // 处理上传的视频
     const videoPath = (req.files && req.files['video'] || [])[0] ? '/uploads/' + req.files['video'][0].filename : (req.body.video_url || '');
 
-    const result = await dbRun(
-      `INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews,status,shipping_method,images,video_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        emoji||'📦', name, category||'', badge||'none', description||'', price, original_price||0, sales||0, rating||5, reviews||0,
-        'active', shipping_method||'auto',
-        JSON.stringify(imagePaths),
-        videoPath
-      ]
-    );
-    res.json({ success: true, message: '商品添加成功', id: result.lastID });
+    const { data, error } = await supabase
+      .from('products')
+      .insert([{
+        emoji: emoji || '📦',
+        name,
+        category: category || '',
+        badge: badge || 'none',
+        description: description || '',
+        price,
+        original_price: original_price || 0,
+        sales: sales || 0,
+        rating: rating || 5,
+        reviews: reviews || 0,
+        status: 'active',
+        shipping_method: shipping_method || 'auto',
+        images: JSON.stringify(imagePaths),
+        video_url: videoPath
+      }])
+      .select()
+      .single();
+
+    if (error) return res.json({ success: false, message: error.message });
+    res.json({ success: true, message: '商品添加成功', id: data.id });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
@@ -238,44 +185,76 @@ app.put('/api/products/:id', upload, async (req, res) => {
     const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method } = req.body;
     if (!name || !price) return res.json({ success: false, message: '名称和售价为必填项' });
 
-    // 已有图片：来自前端表单（可能已被用户删除部分）
     let imagePaths = [];
     if (req.body.existing_images) {
       try { imagePaths = JSON.parse(req.body.existing_images); } catch(e) { imagePaths = []; }
     } else {
-      const existing = await dbGet('SELECT images FROM products WHERE id = ?', [req.params.id]);
-      try { imagePaths = JSON.parse(existing.images || '[]'); } catch(e) { imagePaths = []; }
+      const { data: existing } = await supabase
+        .from('products')
+        .select('images')
+        .eq('id', req.params.id)
+        .single();
+      try { imagePaths = JSON.parse((existing && existing.images) || '[]'); } catch(e) { imagePaths = []; }
     }
 
-    // 追加新上传的图片（最多5张）
     const newImages = (req.files && req.files['images'] || []).map(f => '/uploads/' + f.filename);
     imagePaths = imagePaths.concat(newImages).slice(0, 5);
 
-    // 视频处理
     let videoPath = '';
     if (req.files && req.files['video'] && req.files['video'][0]) {
       videoPath = '/uploads/' + req.files['video'][0].filename;
     } else if (req.body.video_url !== undefined) {
       videoPath = req.body.video_url || '';
     } else {
-      const existing = await dbGet('SELECT video_url FROM products WHERE id = ?', [req.params.id]);
-      videoPath = existing.video_url || '';
+      const { data: existing } = await supabase
+        .from('products')
+        .select('video_url')
+        .eq('id', req.params.id)
+        .single();
+      videoPath = existing ? (existing.video_url || '') : '';
     }
 
-    await dbRun(
-      `UPDATE products SET emoji=?, name=?, category=?, badge=?, description=?, price=?, original_price=?, sales=?, rating=?, reviews=?, shipping_method=?, images=?, video_url=? WHERE id=?`,
-      [emoji||'📦', name, category||'', badge||'none', description||'', price, original_price||0, sales||0, rating||5, reviews||0, shipping_method||'auto', JSON.stringify(imagePaths), videoPath, req.params.id]
-    );
+    const { error } = await supabase
+      .from('products')
+      .update({
+        emoji: emoji || '📦',
+        name,
+        category: category || '',
+        badge: badge || 'none',
+        description: description || '',
+        price,
+        original_price: original_price || 0,
+        sales: sales || 0,
+        rating: rating || 5,
+        reviews: reviews || 0,
+        shipping_method: shipping_method || 'auto',
+        images: JSON.stringify(imagePaths),
+        video_url: videoPath
+      })
+      .eq('id', req.params.id);
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '商品更新成功' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.put('/api/products/:id/toggle-status', async (req, res) => {
   try {
-    const product = await dbGet('SELECT status FROM products WHERE id = ?', [req.params.id]);
-    if (!product) return res.json({ success: false, message: '商品不存在' });
+    const { data: product, error } = await supabase
+      .from('products')
+      .select('status')
+      .eq('id', req.params.id)
+      .single();
+
+    if (error || !product) return res.json({ success: false, message: '商品不存在' });
     const newStatus = product.status === 'active' ? 'disabled' : 'active';
-    await dbRun('UPDATE products SET status = ? WHERE id = ?', [newStatus, req.params.id]);
+
+    const { error: updateError } = await supabase
+      .from('products')
+      .update({ status: newStatus })
+      .eq('id', req.params.id);
+
+    if (updateError) return res.json({ success: false, message: updateError.message });
     const action = newStatus === 'active' ? '上架' : '下架';
     res.json({ success: true, message: `商品已${action}`, status: newStatus });
   } catch(e) { res.json({ success: false, message: e.message }); }
@@ -283,7 +262,12 @@ app.put('/api/products/:id/toggle-status', async (req, res) => {
 
 app.delete('/api/products/:id', async (req, res) => {
   try {
-    await dbRun('DELETE FROM products WHERE id = ?', [req.params.id]);
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '商品已删除' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -291,13 +275,17 @@ app.delete('/api/products/:id', async (req, res) => {
 // ----- 库存接口 -----
 app.get('/api/inventory', async (req, res) => {
   const { product_id, status } = req.query;
-  let sql = 'SELECT * FROM inventory WHERE 1=1';
-  const params = [];
-  if (product_id) { sql += ' AND product_id = ?'; params.push(product_id); }
-  if (status) { sql += ' AND status = ?'; params.push(status); }
-  sql += ' ORDER BY id ASC';
   try {
-    const rows = await dbAll(sql, params);
+    let query = supabase
+      .from('inventory')
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (product_id) query = query.eq('product_id', product_id);
+    if (status) query = query.eq('status', status);
+
+    const { data: rows, error } = await query;
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, data: rows });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -306,11 +294,14 @@ app.post('/api/inventory', async (req, res) => {
   const { product_id, link, pwd, remark } = req.body;
   if (!product_id || !link) return res.json({ success: false, message: '商品ID和链接为必填项' });
   try {
-    const result = await dbRun(
-      `INSERT INTO inventory (product_id,link,pwd,remark) VALUES (?,?,?,?)`,
-      [product_id, link, pwd||'', remark||'']
-    );
-    res.json({ success: true, message: '库存添加成功', id: result.lastID });
+    const { data, error } = await supabase
+      .from('inventory')
+      .insert([{ product_id, link, pwd: pwd || '', remark: remark || '' }])
+      .select()
+      .single();
+
+    if (error) return res.json({ success: false, message: error.message });
+    res.json({ success: true, message: '库存添加成功', id: data.id });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
@@ -318,24 +309,31 @@ app.post('/api/inventory/batch', async (req, res) => {
   const { product_id, lines } = req.body;
   if (!product_id || !lines || !lines.length) return res.json({ success: false, message: '参数不完整' });
   try {
-    db.prepare('BEGIN TRANSACTION').run();
-    const stmt = db.prepare(`INSERT INTO inventory (product_id,link,pwd,remark) VALUES (?,?,?,?)`);
-    let count = 0;
-    lines.forEach(l => {
-      stmt.run(product_id, l.link||'', l.pwd||'', l.remark||'');
-      count++;
-    });
-    db.prepare('COMMIT').run();
-    res.json({ success: true, message: `成功导入 ${count} 条记录` });
-  } catch(e) {
-    db.prepare('ROLLBACK').run();
-    res.json({ success: false, message: e.message });
-  }
+    const records = lines.map(l => ({
+      product_id,
+      link: l.link || '',
+      pwd: l.pwd || '',
+      remark: l.remark || ''
+    }));
+
+    const { data, error } = await supabase
+      .from('inventory')
+      .insert(records)
+      .select();
+
+    if (error) return res.json({ success: false, message: error.message });
+    res.json({ success: true, message: `成功导入 ${records.length} 条记录` });
+  } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.delete('/api/inventory/:id', async (req, res) => {
   try {
-    await dbRun('DELETE FROM inventory WHERE id = ?', [req.params.id]);
+    const { error } = await supabase
+      .from('inventory')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '库存已删除' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -346,24 +344,42 @@ app.post('/api/orders', async (req, res) => {
   if (!items || !total || !email) return res.json({ success: false, message: '参数不完整' });
   const id = 'VM' + Date.now() + crypto.randomBytes(2).toString('hex').toUpperCase();
   try {
-    await dbRun(
-      `INSERT INTO orders (id,items,total,email,phone,note,status) VALUES (?,?,?,?,?,?,?)`,
-      [id, JSON.stringify(items), total, email, phone||'', note||'', 'pending']
-    );
+    const { error } = await supabase
+      .from('orders')
+      .insert([{
+        id,
+        items: JSON.stringify(items),
+        total,
+        email,
+        phone: phone || '',
+        note: note || '',
+        status: 'pending'
+      }]);
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '订单创建成功', orderId: id });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.get('/api/orders', async (req, res) => {
   const { status, search } = req.query;
-  let sql = 'SELECT * FROM orders WHERE 1=1';
-  const params = [];
-  if (status) { sql += ' AND status = ?'; params.push(status); }
-  if (search) { sql += ' AND (id LIKE ? OR email LIKE ?)'; params.push('%'+search+'%', '%'+search+'%'); }
-  sql += ' ORDER BY created_at DESC';
   try {
-    const rows = await dbAll(sql, params);
-    rows.forEach(r => { try { r.items = JSON.parse(r.items); r.links = r.links ? JSON.parse(r.links) : []; } catch(e) {} });
+    let query = supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (status) query = query.eq('status', status);
+    if (search) {
+      query = query.or(`id.ilike.%${search}%,email.ilike.%${search}%`);
+    }
+
+    const { data: rows, error } = await query;
+    if (error) return res.json({ success: false, message: error.message });
+
+    rows.forEach(r => {
+      try { r.items = JSON.parse(r.items); r.links = r.links ? JSON.parse(r.links) : []; } catch(e) {}
+    });
     res.json({ success: true, data: rows });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -373,24 +389,41 @@ app.post('/api/orders/:id/pay', async (req, res) => {
   const orderId = req.params.id;
   const { proof } = req.body || {};
   try {
-    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
-    if (!order) return res.json({ success: false, message: '订单不存在' });
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (error || !order) return res.json({ success: false, message: '订单不存在' });
     if (order.status === 'shipped') return res.json({ success: true, message: '订单已发货', order });
 
-    // 必须有付款凭证，进入待确认状态
     if (!proof) {
       return res.json({ success: false, message: '请上传付款凭证后再提交。付款后请点击"我已完成支付"并上传截图。' });
     }
 
-    await dbRun(`UPDATE orders SET status='pending_confirmation' WHERE id=?`, [orderId]);
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({ status: 'pending_confirmation' })
+      .eq('id', orderId);
+
+    if (updateError) return res.json({ success: false, message: updateError.message });
+
     if (proof && proof.length > 100) {
-      await dbRun(
-        `INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-        ['proof_' + orderId, proof]
-      );
+      const { error: settingsError } = await supabase
+        .from('settings')
+        .upsert([{ key: 'proof_' + orderId, value: proof }], { onConflict: 'key' });
+      if (settingsError) console.error('保存付款凭证失败:', settingsError.message);
     }
-    const updated = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
-    updated.items = JSON.parse(updated.items);
+
+    const { data: updated, error: fetchError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (fetchError) return res.json({ success: false, message: fetchError.message });
+    updated.items = JSON.parse(updated.items || '[]');
     updated.links = updated.links ? JSON.parse(updated.links) : [];
     res.json({ success: true, message: '付款凭证已提交，等待商家确认', order: updated });
   } catch(e) { res.json({ success: false, message: e.message }); }
@@ -399,21 +432,35 @@ app.post('/api/orders/:id/pay', async (req, res) => {
 app.post('/api/orders/:id/confirm-payment', async (req, res) => {
   const orderId = req.params.id;
   try {
-    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
-    if (!order) return res.json({ success: false, message: '订单不存在' });
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (error || !order) return res.json({ success: false, message: '订单不存在' });
     if (order.status !== 'pending_confirmation') return res.json({ success: false, message: '订单状态不正确' });
 
-    const items = JSON.parse(order.items);
+    const items = JSON.parse(order.items || '[]');
     const links = [];
 
     for (const item of items) {
       for (let n = 0; n < item.qty; n++) {
-        const inv = await dbGet(
-          `SELECT * FROM inventory WHERE product_id = ? AND status = 'unused' LIMIT 1`,
-          [item.productId || item.product_id]
-        );
+        const { data: inv } = await supabase
+          .from('inventory')
+          .select('*')
+          .eq('product_id', item.productId || item.product_id)
+          .eq('status', 'unused')
+          .limit(1)
+          .single();
+
         if (inv) {
-          await dbRun(`UPDATE inventory SET status='used', order_id=?, used_at=datetime('now','localtime') WHERE id=?`, [orderId, inv.id]);
+          const { error: updateInvError } = await supabase
+            .from('inventory')
+            .update({ status: 'used', order_id: orderId, used_at: new Date().toISOString() })
+            .eq('id', inv.id);
+
+          if (updateInvError) console.error('更新库存失败:', updateInvError.message);
           links.push({ productName: item.name, emoji: item.emoji, link: inv.link, pwd: inv.pwd, remark: inv.remark || '' });
         } else {
           links.push({ productName: item.name, emoji: item.emoji, link: '', pwd: '', remark: '库存不足，请联系客服处理' });
@@ -421,7 +468,12 @@ app.post('/api/orders/:id/confirm-payment', async (req, res) => {
       }
     }
 
-    await dbRun(`UPDATE orders SET status='shipped', links=? WHERE id=?`, [JSON.stringify(links), orderId]);
+    const { error: updateOrderError } = await supabase
+      .from('orders')
+      .update({ status: 'shipped', links: JSON.stringify(links) })
+      .eq('id', orderId);
+
+    if (updateOrderError) return res.json({ success: false, message: updateOrderError.message });
     res.json({ success: true, message: '付款已确认，已发货' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -429,34 +481,58 @@ app.post('/api/orders/:id/confirm-payment', async (req, res) => {
 app.post('/api/orders/:id/ship', async (req, res) => {
   const orderId = req.params.id;
   try {
-    const order = await dbGet('SELECT * FROM orders WHERE id = ?', [orderId]);
-    if (!order) return res.json({ success: false, message: '订单不存在' });
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (error || !order) return res.json({ success: false, message: '订单不存在' });
 
     let links = order.links ? JSON.parse(order.links) : [];
-    const items = JSON.parse(order.items);
+    const items = JSON.parse(order.items || '[]');
 
     for (const item of items) {
       const alreadyHas = links.filter(l => l.productName === item.name).length;
       for (let n = alreadyHas; n < item.qty; n++) {
-        const inv = await dbGet(
-          `SELECT * FROM inventory WHERE product_id = ? AND status = 'unused' LIMIT 1`,
-          [item.productId || item.product_id]
-        );
+        const { data: inv } = await supabase
+          .from('inventory')
+          .select('*')
+          .eq('product_id', item.productId || item.product_id)
+          .eq('status', 'unused')
+          .limit(1)
+          .single();
+
         if (inv) {
-          await dbRun(`UPDATE inventory SET status='used', order_id=?, used_at=datetime('now','localtime') WHERE id=?`, [orderId, inv.id]);
+          const { error: updateInvError } = await supabase
+            .from('inventory')
+            .update({ status: 'used', order_id: orderId, used_at: new Date().toISOString() })
+            .eq('id', inv.id);
+
+          if (updateInvError) console.error('更新库存失败:', updateInvError.message);
           links.push({ productName: item.name, emoji: item.emoji, link: inv.link, pwd: inv.pwd, remark: inv.remark || '' });
         }
       }
     }
 
-    await dbRun(`UPDATE orders SET status='shipped', links=? WHERE id=?`, [JSON.stringify(links), orderId]);
+    const { error: updateOrderError } = await supabase
+      .from('orders')
+      .update({ status: 'shipped', links: JSON.stringify(links) })
+      .eq('id', orderId);
+
+    if (updateOrderError) return res.json({ success: false, message: updateOrderError.message });
     res.json({ success: true, message: '手动发货完成' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 app.delete('/api/orders/:id', async (req, res) => {
   try {
-    await dbRun('DELETE FROM orders WHERE id = ?', [req.params.id]);
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '订单已删除' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -473,10 +549,11 @@ app.post('/api/settings/qrcode', async (req, res) => {
   const { type, data } = req.body;
   if (!type || !data) return res.json({ success: false, message: '参数不完整' });
   try {
-    await dbRun(
-      `INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-      ['qr_' + type, data]
-    );
+    const { error } = await supabase
+      .from('settings')
+      .upsert([{ key: 'qr_' + type, value: data }], { onConflict: 'key' });
+
+    if (error) return res.json({ success: false, message: error.message });
     res.json({ success: true, message: '收款码已保存' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -484,7 +561,13 @@ app.post('/api/settings/qrcode', async (req, res) => {
 app.get('/api/settings/qrcode', async (req, res) => {
   const { type } = req.query;
   try {
-    const row = await dbGet('SELECT value FROM settings WHERE key = ?', ['qr_' + type]);
+    const { data: row, error } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'qr_' + type)
+      .single();
+
+    if (error) return res.json({ success: true, data: '' });
     res.json({ success: true, data: row ? row.value : '' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -493,14 +576,30 @@ app.get('/api/settings/qrcode', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const products = await dbGet('SELECT COUNT(*) as cnt FROM products WHERE status = "active"');
-    const orders = await dbAll('SELECT * FROM orders WHERE created_at LIKE ?', [today + '%']);
-    const shipped = orders.filter(o => o.status === 'shipped');
+
+    const { count: productsCount } = await supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .then(r => ({ count: r.count || 0 }));
+
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('*')
+      .like('created_at', today + '%');
+
+    const shipped = (orders || []).filter(o => o.status === 'shipped');
     const revenue = shipped.reduce((s, o) => s + o.total, 0);
-    const inventory = await dbGet("SELECT COUNT(*) as cnt FROM inventory WHERE status='unused'");
+
+    const { count: inventoryCount } = await supabase
+      .from('inventory')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'unused')
+      .then(r => ({ count: r.count || 0 }));
+
     res.json({
       success: true,
-      data: { products: products.cnt, orders: orders.length, revenue, inventory: inventory.cnt }
+      data: { products: productsCount, orders: (orders || []).length, revenue, inventory: inventoryCount }
     });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
@@ -508,26 +607,29 @@ app.get('/api/stats', async (req, res) => {
 // ----- 重置数据接口 -----
 app.post('/api/reset', async (req, res) => {
   try {
-    await dbRun('DELETE FROM products');
-    await dbRun('DELETE FROM inventory');
-    await dbRun('DELETE FROM orders');
+    await supabase.from('products').delete().neq('id', 0);
+    await supabase.from('inventory').delete().neq('id', 0);
+    await supabase.from('orders').delete().neq('id', 0);
+
     const defaults = [
-      ['🎁','Apple 礼品卡 $100','礼品卡','hot','美国区App Store & iTunes 充值卡，即时发货',685,720,12580,5,2341],
-      ['🎮','Steam 钱包充值 $50','游戏充值','none','全球版，支持所有区域，秒到账',345,365,8942,5,5672],
-      ['🤖','ChatGPT Plus 一个月','AI服务','sale','官方正版，支持GPT-4o，即开即用',128,168,15234,4,3891],
-      ['🎬','Netflix 高级会员 1个月','流媒体会员','hot','4K画质，4台设备同时在线',45,65,22105,5,4521],
-      ['🎵','Spotify Premium 3个月','音乐会员','none','全球版，无广告，离线下载',89,120,6732,5,1876],
-      ['☁️','iCloud 200GB 一年','云存储','new','苹果官方，自动续费，安全可靠',198,240,3421,5,956],
+      { emoji: '🎁', name: 'Apple 礼品卡 $100', category: '礼品卡', badge: 'hot', description: '美国区App Store & iTunes 充值卡，即时发货', price: 685, original_price: 720, sales: 12580, rating: 5, reviews: 2341 },
+      { emoji: '🎮', name: 'Steam 钱包充值 $50', category: '游戏充值', badge: 'none', description: '全球版，支持所有区域，秒到账', price: 345, original_price: 365, sales: 8942, rating: 5, reviews: 5672 },
+      { emoji: '🤖', name: 'ChatGPT Plus 一个月', category: 'AI服务', badge: 'sale', description: '官方正版，支持GPT-4o，即开即用', price: 128, original_price: 168, sales: 15234, rating: 4, reviews: 3891 },
+      { emoji: '🎬', name: 'Netflix 高级会员 1个月', category: '流媒体会员', badge: 'hot', description: '4K画质，4台设备同时在线', price: 45, original_price: 65, sales: 22105, rating: 5, reviews: 4521 },
+      { emoji: '🎵', name: 'Spotify Premium 3个月', category: '音乐会员', badge: 'none', description: '全球版，无广告，离线下载', price: 89, original_price: 120, sales: 6732, rating: 5, reviews: 1876 },
+      { emoji: '☁️', name: 'iCloud 200GB 一年', category: '云存储', badge: 'new', description: '苹果官方，自动续费，安全可靠', price: 198, original_price: 240, sales: 3421, rating: 5, reviews: 956 },
     ];
-    const stmt = db.prepare(`INSERT INTO products (emoji,name,category,badge,description,price,original_price,sales,rating,reviews) VALUES (?,?,?,?,?,?,?,?,?,?)`);
-    defaults.forEach(d => stmt.run(...d));
+
+    const { error } = await supabase.from('products').insert(defaults);
+    if (error) return res.json({ success: false, message: error.message });
+
     res.json({ success: true, message: '数据已重置，默认商品已恢复' });
   } catch(e) { res.json({ success: false, message: e.message }); }
 });
 
 // ---------- 启动服务器 ----------
 app.listen(PORT, () => {
-  console.log('\n🚀 VirtualMall 后端服务器启动成功！');
+  console.log('\n🚀 VirtualMall 后端服务器启动成功！(Supabase 版)');
   console.log('   前台地址： http://localhost:' + PORT);
   console.log('   管理后台： http://localhost:' + PORT + '/admin-dashboard.html');
   console.log('   按 Ctrl+C 停止服务器\n');
