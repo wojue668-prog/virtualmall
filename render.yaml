@@ -7,7 +7,7 @@ services:
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
-        value: 18.20.0
+        value: 20.11.0
       - key: NODE_ENV
         value: production
       - key: SUPABASE_URL
