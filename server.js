@@ -5,6 +5,7 @@
 
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -24,7 +25,11 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  realtime: {
+    transport: ws
+  }
+});
 console.log('✅ Supabase 连接成功：', SUPABASE_URL);
 
 // ========== 确保 uploads 目录存在 ==========
