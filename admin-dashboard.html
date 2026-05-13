@@ -856,6 +856,7 @@ async function saveProduct(){
             shipping_method:  document.getElementById('formShippingMethod').value||'auto',
             images:          currentEditImages,
             video_url:       videoUrl || currentEditVideo || '',
+            variants:        buildVariantsJson(),
         };
         try {
             if(editId){
