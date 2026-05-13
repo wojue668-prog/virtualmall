@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Database files (will use environment variable for production)
+*.db
+*.db.*
+*.bak*
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# WorkBuddy internal files
+.workbuddy/
+
+# Uploaded files (if you don't want to version control uploads)
+uploads/
+!uploads/.gitkeep
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Build files
+dist/
+build/

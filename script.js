@@ -408,9 +408,20 @@ async function submitOrder(){
 }
 
 // ============================================================
-// 支付页面（调 API 获取收款码）
+// 支付页面（Stripe + 收款码）
 // ============================================================
-async function showPayPage(orderId, total, email){
+let stripeInstance = null;
+let stripeElements = null;
+
+async function loadStripeConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const json = await res.json();
+    return json.stripePublicKey || null;
+  } catch(e) { return null; }
+}
+
+async function showPayPage(orderId, total, email) {
   showPage('pay');
 
   // 获取收款码
@@ -426,71 +437,173 @@ async function showPayPage(orderId, total, email){
     qrWechat = jsonW.data || '';
   } catch(e) {}
 
-  const payUrl = qrAlipay || qrWechat || '';
-  const qrHtml = payUrl
-    ? `<img id="payQrImg" src="${payUrl}" style="width:220px;height:220px;border-radius:8px;border:1px solid #e2e8f0;">`
+  const hasQR = qrAlipay || qrWechat;
+  window._qrAlipay = qrAlipay;
+  window._qrWechat = qrWechat;
+
+  // 检查是否配置了 Stripe
+  const stripePublicKey = await loadStripeConfig();
+
+  let payOptionsHtml = '';
+  if (stripePublicKey) {
+    payOptionsHtml = `
+      <div id="stripePaySection" style="margin-bottom:20px;">
+        <div id="stripeCardElement" style="padding:12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:12px;background:white;"></div>
+        <button onclick="submitStripePay('${orderId}', ${total})" id="stripePayBtn" style="width:100%;padding:12px;border:none;background:linear-gradient(135deg,#6772e5,#556cd6);color:white;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;">💳 使用信用卡支付 ¥${total}</button>
+        <p style="font-size:12px;color:#a0aec0;margin-top:8px;">支持 Visa / Mastercard / American Express</p>
+      </div>
+      <div style="text-align:center;margin:16px 0;color:#a0aec0;font-size:13px;">—— 或者 ——</div>`;
+  }
+
+  const qrHtml = hasQR
+    ? `<img id="payQrImg" src="${qrAlipay || qrWechat}" style="width:220px;height:220px;border-radius:8px;border:1px solid #e2e8f0;">`
     : `<div id="payQrPlaceholder" style="width:220px;height:220px;background:#f7fafc;border-radius:8px;border:2px dashed #cbd5e0;display:flex;align-items:center;justify-content:center;font-size:14px;color:#a0aec0;text-align:center;padding:20px;box-sizing:border-box;">管理员尚未上传<br>收款二维码</div>`;
 
   document.getElementById('payContent').innerHTML = `
-    <div style="background:white;border-radius:16px;border:1px solid #e2e8f0;padding:32px;text-align:center;">
+    <div style="background:white;border-radius:16px;border:1px solid #e2e8f0;padding:32px;text-align:center;max-width:420px;margin:0 auto;">
       <div style="margin-bottom:20px;">
         <div style="font-size:48px;margin-bottom:12px;">📱</div>
         <h3 style="font-size:18px;margin-bottom:6px;">订单 ${orderId}</h3>
         <p style="font-size:14px;color:#718096;">应付金额：<strong style="font-size:24px;color:#e53e3e;">¥${total}</strong></p>
       </div>
+
+      ${payOptionsHtml}
+
       <div style="margin-bottom:20px;" id="payQrContainer">
         ${qrHtml}
       </div>
-      <div style="margin-bottom:20px;">
-        <div style="display:inline-flex;gap:8px;margin-bottom:12px;">
-          <button id="payAlipayBtn" onclick="switchPayType('alipay')" style="padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;border:1px solid #e2e8f0;background:#1677ff;color:white;">📒 支付宝</button>
-          <button id="payWechatBtn" onclick="switchPayType('wechat')" style="padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;border:1px solid #e2e8f0;background:white;color:#333;">💚 微信支付</button>
+
+      ${hasQR ? `
+        <div style="margin-bottom:16px;">
+          <div style="display:inline-flex;gap:8px;margin-bottom:12px;">
+            ${qrAlipay ? `<button id="payAlipayBtn" onclick="switchPayType('alipay')" style="padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;border:1px solid #e2e8f0;background:#1677ff;color:white;">📒 支付宝</button>` : ''}
+            ${qrWechat ? `<button id="payWechatBtn" onclick="switchPayType('wechat')" style="padding:8px 20px;border-radius:8px;font-size:14px;cursor:pointer;border:1px solid #e2e8f0;background:${qrAlipay?'white':'#07c160'};color:${qrAlipay?'#333':'white'};">💚 微信支付</button>` : ''}
+          </div>
+          <p style="font-size:13px;color:#a0aec0;">支付完成后上传凭证并确认</p>
         </div>
-        <p style="font-size:13px;color:#a0aec0;">请用对应App扫描二维码完成支付</p>
-      </div>
-      <div style="background:#f7fafc;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left;">
+        <div style="margin-bottom:16px;text-align:left;">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#4a5568;">上传支付凭证（选填）</label>
+          <input type="file" id="payProofFile" accept="image/*" style="font-size:13px;width:100%;" onchange="previewPayProof()">
+          <div id="payProofPreview" style="margin-top:8px;"></div>
+        </div>
+        <button onclick="confirmPayQR('${orderId}')" style="width:100%;padding:12px;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">我已完成支付</button>
+        <p style="font-size:12px;color:#a0aec0;margin-top:10px;">管理员确认后将会自动发货</p>
+      ` : `
+        <button onclick="confirmPayQR('${orderId}')" style="width:100%;padding:12px;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">我已完成支付（模拟）</button>
+        <p style="font-size:12px;color:#a0aec0;margin-top:10px;">（管理员未设置收款码，此为模拟支付）</p>
+      `}
+      <div style="background:#f7fafc;border-radius:10px;padding:16px;margin-top:20px;text-align:left;">
         <p style="font-size:13px;color:#718096;margin-bottom:6px;">📧 商品将发送至：<strong>${email}</strong></p>
-        <p style="font-size:13px;color:#718096;">支付完成后请点击下方按钮</p>
       </div>
-      <button onclick="confirmPay('${orderId}')" style="padding:12px 40px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">我已完成支付</button>
-      <p style="font-size:12px;color:#a0aec0;margin-top:10px;">（点击即视为支付成功，将自动发货）</p>
     </div>`;
 
-  // 保存当前收款码 URL，供切换用
-  window._qrAlipay = qrAlipay;
-  window._qrWechat = qrWechat;
-}
-
-async function switchPayType(type){
-  const imgEl = document.getElementById('payQrImg');
-  const phEl  = document.getElementById('payQrPlaceholder');
-  const container = document.getElementById('payQrContainer');
-  const url = type === 'alipay' ? (window._qrAlipay || '') : (window._qrWechat || '');
-
-  if (url) {
-    const imgHtml = `<img id="payQrImg" src="${url}" style="width:220px;height:220px;border-radius:8px;border:1px solid #e2e8f0;">`;
-    container.innerHTML = imgHtml;
-  } else {
-    const label = type === 'alipay' ? '支付宝' : '微信';
-    container.innerHTML = `<div id="payQrPlaceholder" style="width:220px;height:220px;background:#f7fafc;border-radius:8px;border:2px dashed #cbd5e0;display:flex;align-items:center;justify-content:center;font-size:14px;color:#a0aec0;text-align:center;padding:20px;box-sizing:border-box;">管理员尚未上传<br>${label}收款码</div>`;
+  // 初始化 Stripe
+  if (stripePublicKey) {
+    initStripe(stripePublicKey, orderId, total);
   }
 
-  document.getElementById('payAlipayBtn').style.background = type === 'alipay' ? '#1677ff' : 'white';
-  document.getElementById('payAlipayBtn').style.color     = type === 'alipay' ? 'white'   : '#333';
-  document.getElementById('payWechatBtn').style.background = type === 'wechat' ? '#07c160' : 'white';
-  document.getElementById('payWechatBtn').style.color     = type === 'wechat' ? 'white'   : '#333';
+  if (qrAlipay) switchPayType('alipay');
+  else if (qrWechat) switchPayType('wechat');
 }
 
-// ============================================================
-// 确认支付（调 API，后端自动发货）
-// ============================================================
-async function confirmPay(orderId){
+async function initStripe(publicKey, orderId, total) {
+  if (stripeInstance) return;
+  // 动态加载 Stripe.js
+  if (!window.Stripe) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://js.stripe.com/v3/';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  stripeInstance = Stripe(publicKey);
+  stripeElements = stripeInstance.elements();
+  const cardElement = stripeElements.create('card', { style: { base: { fontSize: '16px', color: '#2d3748' } } });
+  cardElement.mount('#stripeCardElement');
+  window._stripeCard = cardElement;
+}
+
+async function submitStripePay(orderId, total) {
+  const btn = document.getElementById('stripePayBtn');
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+
   try {
-    const res  = await fetch('/api/orders/' + orderId + '/pay', { method: 'POST' });
+    const res = await fetch('/api/create-payment-intent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: total, orderId })
+    });
     const json = await res.json();
-    if (!json.success) { showToast('支付失败：' + json.message, 'error'); return; }
+    if (!json.success) {
+      showToast('支付初始化失败：' + (json.message || '未知错误'), 'error');
+      btn.disabled = false;
+      btn.textContent = `💳 使用信用卡支付 ¥${total}`;
+      return;
+    }
+
+    const { error } = await stripeInstance.confirmCardPayment(json.clientSecret, {
+      payment_method: { card: window._stripeCard }
+    });
+
+    if (error) {
+      showToast('支付失败：' + error.message, 'error');
+      btn.disabled = false;
+      btn.textContent = `💳 使用信用卡支付 ¥${total}`;
+      return;
+    }
+
+    // 支付成功，调用后端完成订单
+    const payRes = await fetch('/api/orders/' + orderId + '/pay', { method: 'POST' });
+    const payJson = await payRes.json();
+    if (payJson.success) {
+      showSuccessPage(payJson.order);
+    } else {
+      showToast('支付成功但发货失败，请联系客服', 'error');
+    }
+  } catch(e) {
+    showToast('支付出错：' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = `💳 使用信用卡支付 ¥${total}`;
+  }
+}
+
+function previewPayProof() {
+  const fileInput = document.getElementById('payProofFile');
+  const preview = document.getElementById('payProofPreview');
+  if (!fileInput.files.length) { preview.innerHTML = ''; return; }
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    preview.innerHTML = `<img src="${e.target.result}" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #e2e8f0;">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function confirmPayQR(orderId) {
+  // 上传支付凭证（如果有）
+  const fileInput = document.getElementById('payProofFile');
+  let proofBase64 = '';
+  if (fileInput && fileInput.files.length) {
+    proofBase64 = await new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(fileInput.files[0]);
+    });
+  }
+
+  try {
+    const res = await fetch('/api/orders/' + orderId + '/pay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proof: proofBase64 })
+    });
+    const json = await res.json();
+    if (!json.success) { showToast('操作失败：' + json.message, 'error'); return; }
     showSuccessPage(json.order);
-  } catch (e) {
+  } catch(e) {
     showToast('网络错误，请重试', 'error');
   }
 }
@@ -555,9 +668,11 @@ async function renderOrdersPage(){
         const statusColor = o.status === 'shipped' ? '#38a169' : o.status === 'paid' ? '#d69e2e' : '#718096';
         const itemsHtml = (o.items || []).map(it => `<div style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:4px;">${it.emoji} ${it.name} × ${it.qty} <span style="color:#e53e3e;font-weight:600;">¥${it.price * it.qty}</span></div>`).join('');
         const linksHtml = (o.links || []).length ? `<div style="margin-top:12px;padding:12px;background:#f7fafc;border-radius:8px;"><div style="font-size:13px;font-weight:600;margin-bottom:8px;">📦 发货信息：</div>${o.links.map(l => `<div style="font-size:13px;margin-bottom:4px;">${l.emoji} ${l.productName}：${l.link ? '<a href="' + l.link + '" style="color:#667eea;">' + l.link + '</a>' : '<span style="color:#e53e3e;">' + l.remark + '</span>'}${l.pwd ? ' <span style="color:#718096;">提取码：' + l.pwd + '</span>' : ''}</div>`).join('')}</div>` : '';
+        const orderDate = o.created_at ? new Date(o.created_at).toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
         return `<div style="background:white;border-radius:12px;border:1px solid #e2e8f0;padding:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <span style="font-size:14px;color:#718096;">订单号：${o.id}</span>
+            <span style="font-size:12px;color:#a0aec0;">${orderDate}</span>
             <span style="font-size:13px;font-weight:600;color:${statusColor};">${statusLabel}</span>
           </div>
           ${itemsHtml}
