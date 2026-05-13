@@ -448,6 +448,39 @@
                 <div class="form-group"><label>原价（元）</label><input type="number" id="formOriginalPrice" placeholder="如：720" min="0" step="0.01"><div class="form-hint">留空则不显示原价和折扣</div></div>
                 <div class="form-group"><label>销量</label><input type="number" id="formSales" placeholder="如：12580" min="0"></div>
             </div>
+
+            <!-- 变体配置（最多2个） -->
+            <div class="form-group" style="margin-bottom:16px; border:1px solid var(--border); border-radius:var(--radius); padding:16px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" id="formVariantEnabled" onchange="toggleVariantConfig()" style="width:16px; height:16px;">
+                    <span style="font-weight:700;">启用商品变体（如：面值、颜色、区域等）</span>
+                </label>
+                <div id="variantConfig" style="display:none; margin-top:12px;">
+                    <div class="form-row" style="margin-bottom:12px;">
+                        <div class="form-group">
+                            <label>变体1 名称（如：面值）</label>
+                            <input type="text" id="formVariant1Name" placeholder="如：面值" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;">
+                        </div>
+                        <div class="form-group">
+                            <label>变体1 选项（逗号分隔）</label>
+                            <input type="text" id="formVariant1Options" placeholder="如：$100,$50,$25" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;">
+                            <div class="form-hint">多个选项用逗号分隔，如：$100,$50,$25</div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>变体2 名称（可选，如：区域）</label>
+                            <input type="text" id="formVariant2Name" placeholder="如：区域" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;">
+                        </div>
+                        <div class="form-group">
+                            <label>变体2 选项（逗号分隔）</label>
+                            <input type="text" id="formVariant2Options" placeholder="如：美区,中区" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;">
+                            <div class="form-hint">多个选项用逗号分隔，如：美区,中区</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
         <div class="modal-footer"><button class="btn btn-ghost" onclick="closeProductModal()">取消</button><button class="btn btn-primary" onclick="saveProduct()">保存商品</button></div>
     </div>
@@ -461,9 +494,22 @@
             <input type="hidden" id="invEditId">
             <div class="form-group" style="margin-bottom:16px;">
                 <label>关联商品 *</label>
-                <select id="invProductId" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;">
+                <select id="invProductId" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;" onchange="onInvProductChange()">
                     <option value="">请选择商品</option>
                 </select>
+            </div>
+            <!-- 变体值选择（动态显示） -->
+            <div id="invVariantFields" style="display:none; margin-bottom:16px;">
+                <div class="form-row">
+                    <div class="form-group" id="invVariant1Field" style="display:none;">
+                        <label id="invVariant1Label">变体1</label>
+                        <select id="invVariant1Value" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;"></select>
+                    </div>
+                    <div class="form-group" id="invVariant2Field" style="display:none;">
+                        <label id="invVariant2Label">变体2</label>
+                        <select id="invVariant2Value" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none;"></select>
+                    </div>
+                </div>
             </div>
             <div class="form-group" style="margin-bottom:16px;">
                 <label>网盘链接 *</label>
@@ -635,6 +681,25 @@ function renderExistingImages(){
     document.getElementById('existingImageCount').textContent = currentEditImages.length;
 }
 
+// ===== 变体配置相关 =====
+function toggleVariantConfig(){
+    const enabled = document.getElementById('formVariantEnabled').checked;
+    document.getElementById('variantConfig').style.display = enabled ? 'block' : 'none';
+}
+
+function buildVariantsJson(){
+    const enabled = document.getElementById('formVariantEnabled').checked;
+    if(!enabled) return '{}';
+    const v1Name = document.getElementById('formVariant1Name').value.trim();
+    const v1Opts = document.getElementById('formVariant1Options').value.trim();
+    const v2Name = document.getElementById('formVariant2Name').value.trim();
+    const v2Opts = document.getElementById('formVariant2Options').value.trim();
+    const v = { enabled: true };
+    if(v1Name && v1Opts) v.variant1 = { name: v1Name, options: v1Opts.split(',').map(s=>s.trim()).filter(Boolean) };
+    if(v2Name && v2Opts) v.variant2 = { name: v2Name, options: v2Opts.split(',').map(s=>s.trim()).filter(Boolean) };
+    return Object.keys(v).length <= 1 ? '{}' : JSON.stringify(v);
+}
+
 // ===== 商品弹窗操作 =====
 function openProductModal(){
     document.getElementById('editId').value = '';
@@ -648,6 +713,13 @@ function openProductModal(){
     document.getElementById('formPrice').value = '';
     document.getElementById('formOriginalPrice').value = '';
     document.getElementById('formSales').value = 0;
+    // 变体字段重置
+    document.getElementById('formVariantEnabled').checked = false;
+    document.getElementById('variantConfig').style.display = 'none';
+    document.getElementById('formVariant1Name').value = '';
+    document.getElementById('formVariant1Options').value = '';
+    document.getElementById('formVariant2Name').value = '';
+    document.getElementById('formVariant2Options').value = '';
     // 清空图片/视频
     currentEditImages = [];
     currentEditVideo = '';
@@ -692,6 +764,15 @@ async function editProduct(id){
             document.getElementById('videoPreview').innerHTML = '';
         }
         initEmojiPicker(); selectEmoji(p.emoji||'📦');
+        // 加载变体配置
+        const v = p.variants && typeof p.variants === 'object' ? p.variants : {};
+        const hasVariant = v.enabled === true;
+        document.getElementById('formVariantEnabled').checked = hasVariant;
+        document.getElementById('variantConfig').style.display = hasVariant ? 'block' : 'none';
+        document.getElementById('formVariant1Name').value = (v.variant1 && v.variant1.name) || '';
+        document.getElementById('formVariant1Options').value = (v.variant1 && v.variant1.options) ? v.variant1.options.join(',') : '';
+        document.getElementById('formVariant2Name').value = (v.variant2 && v.variant2.name) || '';
+        document.getElementById('formVariant2Options').value = (v.variant2 && v.variant2.options) ? v.variant2.options.join(',') : '';
         document.getElementById('productModal').classList.add('show');
     } catch(e){ showToast('加载商品失败：'+e.message, 'error'); }
 }
@@ -729,6 +810,8 @@ async function saveProduct(){
         fd.append('existing_images', JSON.stringify(currentEditImages));
         // 视频链接（当用户未上传新视频但填了链接）
         if(!hasNewVideo && videoUrl) fd.append('video_url', videoUrl);
+        // 变体配置
+        fd.append('variants', buildVariantsJson());
 
         for(const f of document.getElementById('formImages').files){
             fd.append('images', f);
@@ -933,6 +1016,33 @@ async function renderInventory(){
     } catch(e){ showToast('加载库存失败：'+e.message, 'error'); }
 }
 
+async function onInvProductChange(){
+    const pid = document.getElementById('invProductId').value;
+    const v1Field = document.getElementById('invVariant1Field');
+    const v2Field = document.getElementById('invVariant2Field');
+    const vDiv = document.getElementById('invVariantFields');
+    if(!pid){ vDiv.style.display='none'; return; }
+    try {
+        const json = await apiFetch('/api/products/'+pid);
+        const v = json.data.variants || {};
+        if(v.enabled && v.variant1){
+            document.getElementById('invVariant1Label').textContent = v.variant1.name||'变体1';
+            const sel1 = document.getElementById('invVariant1Value');
+            sel1.innerHTML = v.variant1.options.map(o => `<option value="${o}">${o}</option>`).join('');
+            v1Field.style.display = 'block';
+            vDiv.style.display = 'block';
+        } else { v1Field.style.display='none'; }
+        if(v.enabled && v.variant2){
+            document.getElementById('invVariant2Label').textContent = v.variant2.name||'变体2';
+            const sel2 = document.getElementById('invVariant2Value');
+            sel2.innerHTML = v.variant2.options.map(o => `<option value="${o}">${o}</option>`).join('');
+            v2Field.style.display = 'block';
+            vDiv.style.display = 'block';
+        } else { v2Field.style.display='none'; }
+        if(!v.enabled) vDiv.style.display='none';
+    } catch(e){ vDiv.style.display='none'; }
+}
+
 function openInventoryModal(){
     document.getElementById('invEditId').value = '';
     document.getElementById('invModalTitle').textContent = '添加库存链接';
@@ -941,6 +1051,9 @@ function openInventoryModal(){
     document.getElementById('invLink').value = '';
     document.getElementById('invPwd').value = '';
     document.getElementById('invRemark').value = '';
+    document.getElementById('invVariantFields').style.display = 'none';
+    document.getElementById('invVariant1Field').style.display = 'none';
+    document.getElementById('invVariant2Field').style.display = 'none';
     document.getElementById('inventoryModal').classList.add('show');
 }
 function closeInventoryModal(){ document.getElementById('inventoryModal').classList.remove('show'); }
@@ -949,10 +1062,16 @@ async function saveInventory(){
     const product_id = parseInt(document.getElementById('invProductId').value);
     const link      = document.getElementById('invLink').value.trim();
     if(!product_id || !link){ showToast('请选择商品并填写链接','error'); return; }
+    const body = { product_id, link, pwd:document.getElementById('invPwd').value.trim(), remark:document.getElementById('invRemark').value.trim() };
+    // 变体值
+    const v1 = document.getElementById('invVariant1Value').value;
+    const v2 = document.getElementById('invVariant2Value').value;
+    if(v1) body.variant1_value = v1;
+    if(v2) body.variant2_value = v2;
     try {
         await apiFetch('/api/inventory', {
             method:'POST', headers: { 'Content-Type':'application/json' },
-            body: JSON.stringify({ product_id, link, pwd:document.getElementById('invPwd').value.trim(), remark:document.getElementById('invRemark').value.trim() })
+            body: JSON.stringify(body)
         });
         closeInventoryModal();
         await renderInventory();

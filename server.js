@@ -96,6 +96,7 @@ app.get('/api/products', async (req, res) => {
       const stockCount = (r.inventory || []).filter(inv => inv.status === 'unused').length;
       const { inventory, ...rest } = r;
       try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+      try { rest.variants = JSON.parse(rest.variants || '{}'); } catch(e) { rest.variants = {}; }
       return { ...rest, stock_count: stockCount };
     });
 
@@ -117,6 +118,7 @@ app.get('/api/products/active', async (req, res) => {
       const stockCount = (r.inventory || []).filter(inv => inv.status === 'unused').length;
       const { inventory, ...rest } = r;
       try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+      try { rest.variants = JSON.parse(rest.variants || '{}'); } catch(e) { rest.variants = {}; }
       return { ...rest, stock_count: stockCount };
     });
 
@@ -138,6 +140,7 @@ app.get('/api/products/:id', async (req, res) => {
     const stockCount = (row.inventory || []).filter(inv => inv.status === 'unused').length;
     const { inventory, ...rest } = row;
     try { rest.images = JSON.parse(rest.images || '[]'); } catch(e) { rest.images = []; }
+    try { rest.variants = JSON.parse(rest.variants || '{}'); } catch(e) { rest.variants = {}; }
     rest.stock_count = stockCount;
 
     res.json({ success: true, data: rest });
@@ -147,7 +150,7 @@ app.get('/api/products/:id', async (req, res) => {
 // POST /api/products - 支持文件上传
 app.post('/api/products', upload, async (req, res) => {
   try {
-    const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method } = req.body;
+    const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method, variants } = req.body;
     if (!name || !price) return res.json({ success: false, message: '名称和售价为必填项' });
 
     const imagePaths = (req.files && req.files['images'] || []).map(f => '/uploads/' + f.filename);
@@ -169,7 +172,8 @@ app.post('/api/products', upload, async (req, res) => {
         status: 'active',
         shipping_method: shipping_method || 'auto',
         images: JSON.stringify(imagePaths),
-        video_url: videoPath
+        video_url: videoPath,
+        variants: variants || '{}'
       }])
       .select()
       .single();
@@ -182,7 +186,7 @@ app.post('/api/products', upload, async (req, res) => {
 // PUT /api/products/:id - 支持文件上传
 app.put('/api/products/:id', upload, async (req, res) => {
   try {
-    const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method } = req.body;
+    const { emoji, name, category, badge, description, price, original_price, sales, rating, reviews, shipping_method, variants } = req.body;
     if (!name || !price) return res.json({ success: false, message: '名称和售价为必填项' });
 
     let imagePaths = [];
@@ -229,7 +233,8 @@ app.put('/api/products/:id', upload, async (req, res) => {
         reviews: reviews || 0,
         shipping_method: shipping_method || 'auto',
         images: JSON.stringify(imagePaths),
-        video_url: videoPath
+        video_url: videoPath,
+        variants: variants || '{}'
       })
       .eq('id', req.params.id);
 
@@ -291,12 +296,12 @@ app.get('/api/inventory', async (req, res) => {
 });
 
 app.post('/api/inventory', async (req, res) => {
-  const { product_id, link, pwd, remark } = req.body;
+  const { product_id, link, pwd, remark, variant1_value, variant2_value } = req.body;
   if (!product_id || !link) return res.json({ success: false, message: '商品ID和链接为必填项' });
   try {
     const { data, error } = await supabase
       .from('inventory')
-      .insert([{ product_id, link, pwd: pwd || '', remark: remark || '' }])
+      .insert([{ product_id, link, pwd: pwd || '', remark: remark || '', variant1_value: variant1_value || '', variant2_value: variant2_value || '' }])
       .select()
       .single();
 
@@ -313,7 +318,9 @@ app.post('/api/inventory/batch', async (req, res) => {
       product_id,
       link: l.link || '',
       pwd: l.pwd || '',
-      remark: l.remark || ''
+      remark: l.remark || '',
+      variant1_value: l.variant1_value || '',
+      variant2_value: l.variant2_value || ''
     }));
 
     const { data, error } = await supabase
@@ -445,14 +452,19 @@ app.post('/api/orders/:id/confirm-payment', async (req, res) => {
     const links = [];
 
     for (const item of items) {
+      const v1 = item.variant1_value || '';
+      const v2 = item.variant2_value || '';
       for (let n = 0; n < item.qty; n++) {
-        const { data: inv } = await supabase
+        let query = supabase
           .from('inventory')
           .select('*')
           .eq('product_id', item.productId || item.product_id)
-          .eq('status', 'unused')
-          .limit(1)
-          .single();
+          .eq('status', 'unused');
+
+        if (v1) query = query.eq('variant1_value', v1);
+        if (v2) query = query.eq('variant2_value', v2);
+
+        const { data: inv } = await query.limit(1).single();
 
         if (inv) {
           const { error: updateInvError } = await supabase
@@ -461,9 +473,9 @@ app.post('/api/orders/:id/confirm-payment', async (req, res) => {
             .eq('id', inv.id);
 
           if (updateInvError) console.error('更新库存失败:', updateInvError.message);
-          links.push({ productName: item.name, emoji: item.emoji, link: inv.link, pwd: inv.pwd, remark: inv.remark || '' });
+          links.push({ productName: item.name, emoji: item.emoji, link: inv.link, pwd: inv.pwd, remark: inv.remark || '', variant1_value: inv.variant1_value || '', variant2_value: inv.variant2_value || '' });
         } else {
-          links.push({ productName: item.name, emoji: item.emoji, link: '', pwd: '', remark: '库存不足，请联系客服处理' });
+          links.push({ productName: item.name, emoji: item.emoji, link: '', pwd: '', remark: '库存不足，请联系客服处理', variant1_value: v1, variant2_value: v2 });
         }
       }
     }
@@ -493,15 +505,20 @@ app.post('/api/orders/:id/ship', async (req, res) => {
     const items = JSON.parse(order.items || '[]');
 
     for (const item of items) {
-      const alreadyHas = links.filter(l => l.productName === item.name).length;
+      const v1 = item.variant1_value || '';
+      const v2 = item.variant2_value || '';
+      const alreadyHas = links.filter(l => l.productName === item.name && l.variant1_value === v1 && l.variant2_value === v2).length;
       for (let n = alreadyHas; n < item.qty; n++) {
-        const { data: inv } = await supabase
+        let query = supabase
           .from('inventory')
           .select('*')
           .eq('product_id', item.productId || item.product_id)
-          .eq('status', 'unused')
-          .limit(1)
-          .single();
+          .eq('status', 'unused');
+
+        if (v1) query = query.eq('variant1_value', v1);
+        if (v2) query = query.eq('variant2_value', v2);
+
+        const { data: inv } = await query.limit(1).single();
 
         if (inv) {
           const { error: updateInvError } = await supabase

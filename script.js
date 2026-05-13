@@ -189,13 +189,26 @@ function searchProducts(){
 // ============================================================
 // 商品详情
 // ============================================================
+// ============================================================
+// 商品详情（支持变体）
+// ============================================================
 function viewProduct(id){
   const p = allProducts.find(x => x.id === id);
   if (!p) return;
   showPage('detail');
 
   const stars    = '★'.repeat(Math.floor(p.rating||5)) + '☆'.repeat(5 - Math.floor(p.rating||5));
-  const discount = p.original_price ? Math.round(p.price / p.original_price * 10 * 10) / 10 + '折' : '';
+  const discount = p.original_price ? Math.round(p.price / p.original_price * 10) / 10 + '折' : '';
+
+  // 变体选择器 HTML
+  let variantHtml = '';
+  const v = p.variants && p.variants.enabled ? p.variants : null;
+  if (v && v.variant1) {
+    variantHtml += '<div style="margin-bottom:12px;"><label style="font-size:13px;color:#718096;display:block;margin-bottom:6px;">'+v.variant1.name+'：</label><select id="variant1Sel" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;min-width:160px;">'+v.variant1.options.map(o=>'<option value="'+o+'">'+o+'</option>').join('')+'</select></div>';
+  }
+  if (v && v.variant2) {
+    variantHtml += '<div style="margin-bottom:16px;"><label style="font-size:13px;color:#718096;display:block;margin-bottom:6px;">'+v.variant2.name+'：</label><select id="variant2Sel" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;min-width:160px;">'+v.variant2.options.map(o=>'<option value="'+o+'">'+o+'</option>').join('')+'</select></div>';
+  }
 
   document.getElementById('detailContent').innerHTML = `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:32px; align-items:start;" class="detail-grid">
@@ -212,6 +225,7 @@ function viewProduct(id){
         <div style="color:#718096; font-size:14px; margin-bottom:20px;">
           <span>⭐ ${stars}（${(p.reviews||0)} 评价）</span> &nbsp;|&nbsp; <span>已售 ${(p.sales||0).toLocaleString()}</span> &nbsp;|&nbsp; <span>分类：${p.category}</span>
         </div>
+        ${variantHtml}
         <div style="display:flex; gap:12px; margin-top:24px;">
           <button onclick="addToCart(${p.id})" style="flex:1; padding:12px; border:2px solid #667eea; background:white; color:#667eea; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">加入购物车</button>
           <button onclick="buyNow(${p.id})" style="flex:1; padding:12px; border:none; background:linear-gradient(135deg,#667eea,#764ba2); color:white; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">立即购买</button>
@@ -236,8 +250,11 @@ function saveCart(cart){ localStorage.setItem('vm_cart', JSON.stringify(cart)); 
 
 function addToCart(id){
   const cart = getCart();
-  const exist = cart.find(i => i.id === id);
-  if (exist) { exist.qty++; } else { cart.push({ id, qty: 1 }); }
+  const v1 = document.getElementById('variant1Sel') ? document.getElementById('variant1Sel').value : '';
+  const v2 = document.getElementById('variant2Sel') ? document.getElementById('variant2Sel').value : '';
+  const key = id + '|' + v1 + '|' + v2;
+  const exist = cart.find(i => (i.id+'|'+ (i.variant1_value||'') +'|'+ (i.variant2_value||'')) === key);
+  if (exist) { exist.qty++; } else { cart.push({ id, qty: 1, variant1_value: v1, variant2_value: v2 }); }
   saveCart(cart);
   updateCartCount();
   showToast('已加入购物车 ✓');
@@ -279,6 +296,8 @@ function renderCart(){
       <td style="padding:14px 16px;"><div style="display:flex;align-items:center;gap:12px;">
         <div style="width:48px;height:48px;background:#f7fafc;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">${p.emoji}</div>
         <span style="font-weight:600;font-size:14px;">${p.name}</span>
+        ${item.variant1_value ? '<div style="font-size:12px;color:#718096;">'+(p.variants&&p.variants.variant1?p.variants.variant1.name:'变体1')+'：'+item.variant1_value+'</div>' : ''}
+        ${item.variant2_value ? '<div style="font-size:12px;color:#718096;">'+(p.variants&&p.variants.variant2?p.variants.variant2.name:'变体2')+'：'+item.variant2_value+'</div>' : ''}
       </div></td>
       <td style="padding:14px 16px;text-align:center;font-weight:700;color:#e53e3e;font-size:15px;">¥${p.price}</td>
       <td style="padding:14px 16px;text-align:center;">
@@ -384,7 +403,7 @@ async function submitOrder(){
   const products = allProducts;
   const orderItems = cart.map(item => {
     const p = products.find(x => x.id === item.id) || { emoji:'❓', name:'已下架', price:0 };
-    return { productId: item.id, name: p.name, emoji: p.emoji, qty: item.qty, price: p.price };
+    return { productId: item.id, name: p.name, emoji: p.emoji, qty: item.qty, price: p.price, variant1_value: item.variant1_value||'', variant2_value: item.variant2_value||'' };
   });
   const total = orderItems.reduce((s, i) => s + i.price * i.qty, 0);
 
